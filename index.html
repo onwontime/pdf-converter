@@ -1,0 +1,1342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF 이미지 변환기 + OCR PDF 다운로드 (기능 개선)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js'></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
+  <style>
+    body {
+      font-family: "Inter", sans-serif;
+      background-color: #f4f7f6;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      background-color: #ffffff;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+      width: 100%;
+      max-width: 1200px;
+      text-align: center;
+    }
+    .image-block {
+      cursor: pointer;
+      transition: background-color 0.2s, border-color 0.2s; /* border-color 전환 효과 추가 */
+      background: white;
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+      display: flex; /* Flexbox를 사용하여 이미지와 요소들을 세로로 배치 */
+      flex-direction: column;
+      align-items: center;
+      position: relative; /* 텍스트 영역 위치 조정을 위해 */
+      border: 2px solid transparent; /* 기본 투명 테두리 */
+    }
+    .image-block:hover {
+      background-color: #edf2f7;
+    }
+    .image-block.selected {
+      background-color: #bee3f8;
+      border-color: #4299e1; /* 선택 시 테두리 색상 */
+    }
+    /* OCR 변환 완료된 페이지에 테두리 추가 */
+    .image-block.ocr-processed {
+        border-color: #4272e1; /* 남색 테두리 */
+    }
+
+    .grid-output {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); /* 반응형 그리드 */
+      gap: 1rem;
+      margin-top: 1rem; /* 선택 패널과의 간격 */
+
+      position: relative; /* 드래그 선택을 위해 필요 */
+      user-select: none;  /* 드래그 중 텍스트 선택 방지 */
+    }
+    .action-btn { /* 모든 액션 버튼에 공통 스타일 적용 */
+      display: inline-block;
+      margin: 0.3rem; /* 버튼 간 간격 조정 */
+      padding: 8px 16px; /* 패딩 조정 */
+      font-weight: bold;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 0.9em; /* 폰트 크기 조정 */
+    }
+    .primary-btn { /* 주요 액션 버튼 (변환, 다운로드) */
+        background-color: #4299e1;
+        color: white;
+    }
+    .primary-btn:hover {
+        background-color: #3182ce;
+    }
+    .danger-btn { /* 정지 버튼 */
+        background-color: #e53e3e; /* 빨간색 */
+        color: white;
+    }
+    .danger-btn:hover {
+        background-color: #c53030; /* 더 진한 빨간색 */
+    }
+     .action-btn:disabled { /* 비활성화 스타일 */
+        background-color: #a0aec0; /* 회색 */
+        cursor: not-allowed;
+     }
+
+    /* 새로운 버튼 스타일: 외곽선, 흰색 배경 */
+    .outline-btn {
+        background-color: white;
+        color: #4299e1; /* 기본 텍스트 색상 */
+        border: 2px solid #4299e1; /* 외곽선 색상 */
+    }
+    .outline-btn:hover {
+        background-color: #ebf8ff; /* 호버 시 연한 파란색 배경 */
+        color: #3182ce; /* 호버 시 텍스트 색상 */
+        border-color: #3182ce; /* 호버 시 외곽선 색상 */
+    }
+     .outline-btn:disabled { /* 비활성화 스타일 */
+        background-color: #ffffff; /* 흰색 배경 유지 */
+        color: #a0aec0; /* 회색 텍스트 */
+        border-color: #a0aec0; /* 회색 외곽선 */
+        cursor: not-allowed;
+     }
+
+
+    /* 파일명 표시를 위한 스타일 */
+    #selectedFileName {
+      margin-bottom: 1rem; /* 상태 메시지와의 간격 */
+      font-weight: bold;
+      color: #333;
+    }
+    /* 상태 메시지와 정지 버튼을 담을 컨테이너 */
+    .status-container {
+        display: flex;
+        align-items: center;
+        justify-content: center; /* 중앙 정렬 */
+        margin-bottom: 1rem; /* 하단 여백 */
+        min-height: 1.5em; /* 상태 메시지가 없을 때 높이 유지 */
+    }
+    .status-container #status {
+        margin-bottom: 0; /* 상태 메시지 자체 하단 여백 제거 */
+        margin-right: 10px; /* 버튼과의 간격 */
+    }
+    /* 다운로드 버튼 그룹을 위한 스타일 */
+    .download-buttons-group {
+        margin-top: 1rem; /* 상단 여백 추가 */
+        margin-bottom: 1rem; /* 하단 여백 추가 */
+        /* text-align: center; /* 중앙 정렬 유지 */
+    }
+     /* OCR 언어 선택 드롭다운 스타일 */
+    #languageSelect {
+        margin-left: 1rem; /* 버튼과의 간격 */
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid #cbd5e0;
+        font-size: 0.9em;
+    }
+     /* OCR PSM 선택 드롭다운 스타일 */
+    #psmSelect {
+        margin-left: 1rem; /* 버튼과의 간격 */
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid #cbd5e0;
+        font-size: 0.9em;
+    }
+    /* 선택 패널 좌측 정렬 및 상단 여백 */
+    #selectionPanel {
+        text-align: left; /* 좌측 정렬 */
+        margin-top: 1rem; /* 상태 메시지 컨테이너와의 간격 */
+        margin-bottom: 1rem; /* 페이지 미리보기와의 간격 */
+    }
+
+    /* OCR 텍스트 영역 스타일 (더 이상 사용되지 않음) */
+    .ocr-text {
+        display: none;
+    }
+
+    /* 텍스트 보기 모달 스타일 */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 100;
+        display: none; /* 초기에는 숨김 */
+    }
+
+    .modal-content {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 8px;
+        max-width: 90%; /* 최대 너비 증가 */
+        max-height: 90%; /* 최대 높이 증가 */
+        overflow-y: auto;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-content .text-area {
+        flex-grow: 1; /* 남은 공간을 텍스트 영역이 채우도록 */
+        margin-bottom: 15px;
+        padding: 10px;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        white-space: pre-wrap; /* 공백 및 줄바꿈 유지 */
+        word-break: break-word; /* 긴 단어 자동 줄바꿈 */
+        overflow-y: auto; /* 텍스트 내용 스크롤 */
+        max-height: 60vh; /* 모달 내 최대 높이 (뷰포트 높이 기준) */
+        resize: vertical; /* 세로 크기 조절 가능 */
+        min-height: 150px; /* 최소 높이 증가 */
+    }
+
+    .modal-content .button-group {
+        text-align: center;
+    }
+
+    /* OCR 옵션 컨테이너 스타일 */
+    #ocrOptionsContainer {
+        margin-left: 1rem; /* OCR 변환 버튼과의 간격 */
+        margin-right: 1rem; /* 초기화 버튼과의 간격 */
+    }
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-2xl font-bold mb-4">PDF 이미지 변환기 + OCR PDF 다운로드</h1>
+
+    <div id="dropZone" class="border-2 border-dashed border-gray-300 p-6 rounded-lg text-gray-600 cursor-pointer mb-4">
+      여기에 PDF 파일을 드래그 앤 드롭하거나 클릭해서 선택하세요
+    </div>
+    <input type="file" id="pdfInput" accept="application/pdf" class="hidden">
+
+    <div class="mb-4 flex justify-center items-center">
+      <button id="downloadImageBtn" class="action-btn primary-btn" disabled>이미지 다운로드 (ZIP)</button>
+      <button id="ocrTriggerBtn" class="action-btn primary-btn" disabled>OCR 변환</button> <div id="ocrOptionsContainer" class="flex items-center hidden">
+           <select id="languageSelect" class="ml-4">
+              <option value="kor+eng">한국어+영어</option>
+              <option value="eng">영어</option>
+              <option value="kor">한국어</option>
+              <option value="jpn">일본어</option>
+              <option value="chi_sim">중국어(간체)</option>
+              <option value="chi_tra">중국어(번체)</option>
+           </select>
+            <select id="psmSelect" class="ml-2">
+                <option value="3" selected title="보통 문서, 표나 그림이 섞여있을 때 좋아요.">자동 (보통 문서)</option>
+                <option value="6" title="글씨만 길게 이어지는 문서에 좋아요. (표가 많으면 안 좋아요)">단일 블록 (글씨만 많을 때)</option>
+                <option value="1" title="문서가 기울거나 돌아가 있을 때 방향을 맞춰줘요.">방향 자동 감지</option>
+                <option value="11" title="광고, 포스터처럼 글씨가 띄엄띄엄 흩어져 있을 때 좋아요.">띄엄띄엄 글씨</option>
+                </select>
+            <button id="startOcrBtn" class="action-btn outline-btn ml-2" disabled>시작</button> </div>
+
+      <button id="resetBtn" class="action-btn primary-btn">초기화</button>
+    </div>
+
+    <div class="download-buttons-group hidden" id="ocrActionButtons">
+      <button id="downloadOcrPdfBtn" class="action-btn outline-btn" disabled>OCR 검색 가능 PDF 다운로드</button>
+      <button id="viewOcrTextBtn" class="action-btn outline-btn" disabled>선택 페이지 텍스트 보기</button>
+      </div>
+
+    <p id="selectedFileName" class="text-gray-700"></p>
+    <div class="status-container">
+        <p id="status" class="text-gray-600">파일을 선택해주세요.</p>
+        <button id="stopBtn" class="action-btn danger-btn hidden">정지</button>
+    </div>
+
+    <div class="mb-2 hidden" id="selectionPanel">
+      <label><input type="checkbox" id="selectAll"> 전체 선택</label>
+      <span id="selectedCount" class="ml-4 font-semibold">(선택: 0)</span>
+      <button id="clearSelection"
+      class="ml-2 hidden px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 action-btn">
+      선택 해제
+      </button>
+    </div>
+
+    <div id="output" class="grid-output"></div>
+
+    <div id="ocrTextModalOverlay" class="modal-overlay">
+        <div class="modal-content">
+            <textarea class="text-area" id="modalTextArea"></textarea> <div class="button-group">
+                <button class="action-btn primary-btn" id="modalSaveEditedTextBtn">수정 저장</button> <button class="action-btn primary-btn" id="modalCopyTextBtn">텍스트 복사하기</button>
+                 <button id="modalDownloadTextBtn" class="action-btn primary-btn">텍스트 다운로드 (.txt)</button> <button class="action-btn" id="modalCloseTextBtn">닫기</button>
+            </div>
+        </div>
+    </div>
+
+  </div>
+
+  <script type="module">
+  // 👇 아래 코드는 index.html 내 <script type="module"> 태그 안에 위치해야 합니다
+
+import { getDocument } from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs';
+// pdf-lib에서 필요한 객체 가져오기
+const { PDFDocument, rgb, StandardFonts } = PDFLib;
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+
+const pdfInput = document.getElementById("pdfInput");
+const dropZone = document.getElementById("dropZone");
+const ocrTriggerBtn = document.getElementById("ocrTriggerBtn"); // OCR 변환 버튼 (트리거)
+const resetBtn = document.getElementById("resetBtn");
+const output = document.getElementById("output");
+const status = document.getElementById("status");
+const selectedFileNameElement = document.getElementById("selectedFileName"); // 파일명 표시 요소 추가
+
+// 다운로드 버튼
+const downloadImageBtn = document.getElementById("downloadImageBtn");
+const downloadOcrPdfBtn = document.getElementById("downloadOcrPdfBtn"); // OCR PDF 다운로드 버튼 요소
+// 텍스트 보기 버튼
+const viewOcrTextBtn = document.getElementById("viewOcrTextBtn"); // 텍스트 보기 버튼 요소 추가
+
+const selectAllCheckbox = document.getElementById("selectAll");
+const selectedCountSpan = document.getElementById("selectedCount");
+const clearSelectionBtn = document.getElementById("clearSelection");
+const selectionPanel = document.getElementById("selectionPanel");
+
+const stopBtn = document.getElementById("stopBtn"); // 정지 버튼 요소 추가
+
+// OCR 관련 액션 버튼 그룹
+const ocrActionButtons = document.getElementById("ocrActionButtons");
+
+// OCR 옵션 컨테이너 및 내부 요소
+const ocrOptionsContainer = document.getElementById("ocrOptionsContainer"); // OCR 옵션 컨테이너
+const languageSelect = document.getElementById("languageSelect"); // OCR 언어 선택 드롭다운
+const psmSelect = document.getElementById("psmSelect"); // OCR PSM 선택 드롭다운
+const startOcrBtn = document.getElementById("startOcrBtn"); // 새로운 시작 버튼
+
+
+let selectedFile = null;
+let zip = null; // 전체 이미지 다운로드용 zip 객체
+let lastSelectedIndex = null;
+let isProcessing = false; // 작업 진행 상태 플래그
+let storedOcrResults = []; // OCR 결과를 저장할 배열
+let isOcrCompleted = false; // OCR 완료 상태 플래그
+let currentOcrLanguage = languageSelect.value; // 현재 선택된 OCR 언어
+let currentPsm = parseInt(psmSelect.value); // 현재 선택된 PSM 모드 (초기값)
+let totalPdfPages = 0; // 전체 PDF 페이지 수 저장
+let currentSelectedBlocks = []; // 현재 OCR 변환 대상인 선택된 블록 목록
+
+// PSM 드롭다운 변경 시 currentPsm 업데이트
+psmSelect.addEventListener('change', (e) => {
+    currentPsm = parseInt(e.target.value);
+    // PSM 변경 시 worker를 다시 로드할 필요는 없지만,
+    // 다음 OCR 작업부터 변경된 PSM이 적용됩니다.
+    // 만약 PSM 변경 즉시 worker를 재설정하려면 여기에 loadOcrWorker 호출 추가
+    // loadOcrWorker(currentOcrLanguage); // 이 경우 await 필요 없음
+});
+
+// 언어 드롭다운 변경 시 currentOcrLanguage 업데이트 및 worker 재설정
+languageSelect.addEventListener('change', async (e) => {
+    currentOcrLanguage = e.target.value;
+    // 언어 변경 시 worker를 재설정하여 새로운 언어 훈련 데이터를 로드
+    if (worker) { // worker가 이미 로드된 경우에만 재설정
+        status.textContent = `OCR 언어 변경 중: ${currentOcrLanguage} 로드...`;
+        updateButtonStates(true); // 언어 로드 중 버튼 비활성화
+        try {
+             await loadOcrWorker(currentOcrLanguage);
+             status.textContent = `OCR 언어 변경 완료! OCR 분석을 시작할 수 있습니다.`;
+        } catch (error) {
+             console.error("OCR 언어 로드 중 오류 발생:", error);
+             status.textContent = "OCR 언어 로드 중 오류가 발생했습니다.";
+        } finally {
+             updateButtonStates(false); // 언어 로드 완료/오류 후 버튼 활성화
+             // OCR 옵션 컨테이너는 언어 변경 시에도 계속 표시 유지
+             ocrOptionsContainer.classList.remove("hidden");
+        }
+    }
+});
+
+
+// OCR worker 초기화 (성능 향상을 위해 미리 로드)
+// 초기 언어 설정은 여기서 하지 않고, OCR 변환 시작 시점에 설정합니다.
+// const worker = await Tesseract.createWorker('kor+eng', 1, { logger: m => {} });
+let worker = null; // worker 변수를 나중에 할당하도록 변경
+
+
+// Tesseract worker 로드 및 언어 설정 함수
+async function loadOcrWorker(lang) {
+    if (worker) {
+        await worker.terminate(); // 기존 worker 종료
+    }
+    // OCR 엔진 모드 (OEM) 및 페이지 분할 모드 (PSM) 설정
+    const ocrOptions = {
+        logger: m => {
+            // Tesseract 내부 진행 상태 로깅 (여기서는 로딩/초기화 상태만 표시)
+            if (m.status === 'loading tesseract core' || m.status === 'initializing tesseract' || m.status === 'loading language traineddata') {
+                 // worker 로딩 및 초기화 상태 표시
+                 status.textContent = `OCR Worker ${m.status}... (${Math.round(m.progress * 100)}%)`;
+            }
+             // recognizing text 상태는 루프 내에서 직접 처리
+        },
+        // OCR 설정 추가
+        oem: 3, // Default OCR engine mode
+        // PSM 값은 현재 선택된 값 사용
+        psm: currentPsm // 드롭다운에서 선택된 PSM 값 사용
+    };
+
+    worker = await Tesseract.createWorker(lang, 1, ocrOptions);
+}
+
+// 이미지 이진화 처리 함수
+function binarizeImage(canvas) {
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const threshold = 128; // 임계값 설정 (0-255)
+    for (let j = 0; j < data.length; j += 4) {
+        const avg = (data[j] + data[j + 1] + data[j + 2]) / 3;
+        const color = avg > threshold ? 255 : 0; // 임계값 기준으로 흑 또는 백 결정
+        data[j] = color; // red
+        data[j + 1] = color; // green
+        data[j + 2] = color; // blue
+    }
+    ctx.putImageData(imageData, 0, 0);
+}
+
+
+// 버튼 상태 업데이트 함수
+function updateButtonStates(processing) {
+    isProcessing = processing;
+    const pagesExist = output.querySelectorAll(".image-block").length > 0;
+    const selectedPagesExist = output.querySelectorAll(".image-block.selected").length > 0;
+    const ocrProcessedPagesExist = output.querySelectorAll(".image-block.ocr-processed").length > 0; // OCR 처리 완료된 페이지 존재 여부
+
+    // 초기 상태: 모든 버튼 비활성화 (파일 선택 전)
+    downloadImageBtn.disabled = true;
+    ocrTriggerBtn.disabled = true;
+    resetBtn.disabled = true;
+    startOcrBtn.disabled = true; // 시작 버튼 초기 비활성화
+
+    // 파일이 선택된 경우: 초기화 버튼만 활성화
+    if (selectedFile && !processing) {
+        resetBtn.disabled = false;
+
+        // 선택된 페이지가 있는 경우: 이미지 다운로드, OCR 변환, 초기화 버튼 활성화
+        if (selectedPagesExist) {
+            downloadImageBtn.disabled = false;
+            ocrTriggerBtn.disabled = false; // OCR 변환 버튼 활성화 조건 변경
+        }
+    }
+
+    // OCR 옵션 컨테이너 내부 요소 (언어, PSM 드롭다운, 시작 버튼): 작업 중이 아닐 때만 활성화
+    languageSelect.disabled = processing;
+    psmSelect.disabled = processing;
+
+    // 시작 버튼: 작업 중이 아니며, OCR 옵션 컨테이너가 표시되어 있고, 선택된 페이지가 하나라도 있을 때 활성화
+    if (!processing && !ocrOptionsContainer.classList.contains("hidden") && selectedPagesExist) {
+         startOcrBtn.disabled = false;
+    }
+
+
+    stopBtn.classList.toggle("hidden", !processing); // 작업 중일 때만 정지 버튼 표시
+
+    // OCR 관련 버튼 그룹 표시/숨김: 작업 중이 아니고 OCR이 완료되었으며, OCR 처리된 페이지가 하나라도 있을 때 표시
+    ocrActionButtons.classList.toggle("hidden", processing || !isOcrCompleted || !ocrProcessedPagesExist);
+
+
+    // OCR PDF 다운로드 및 텍스트 보기 버튼 활성화/비활성화: OCR이 완료되었고 OCR 처리된 페이지가 하나라도 있으며, 선택된 페이지가 하나라도 있을 때 활성화
+    if (!processing && isOcrCompleted && ocrProcessedPagesExist) {
+         downloadOcrPdfBtn.disabled = !selectedPagesExist;
+         viewOcrTextBtn.disabled = !selectedPagesExist;
+         // downloadTextBtn은 모달 안에 있으므로 여기서 제어하지 않음
+    } else {
+         downloadOcrPdfBtn.disabled = true;
+         viewOcrTextBtn.disabled = true;
+         // downloadTextBtn은 모달 안에 있으므로 여기서 제어하지 않음
+    }
+}
+
+
+// 파일 처리
+async function handleFile(file) { // async 함수로 변경
+  console.log("handleFile called with file:", file); // Added log
+  if (file && file.type === "application/pdf") {
+    selectedFile = file;
+    output.innerHTML = "";
+    selectionPanel.classList.add("hidden"); // 파일 선택 시 선택 패널 숨김
+    ocrActionButtons.classList.add("hidden"); // OCR 버튼 그룹 숨김
+    ocrOptionsContainer.classList.add("hidden"); // OCR 옵션 컨테이너 숨김
+    selectedFileNameElement.textContent = `선택된 파일: ${file.name}`; // 파일명 표시
+    status.textContent = "PDF 파일을 이미지로 변환 중..."; // 상태 메시지 업데이트
+    storedOcrResults = []; // 새 파일 선택 시 OCR 결과 초기화
+    isOcrCompleted = false; // OCR 완료 상태 초기화
+    updateButtonStates(true); // 이미지 변환 중, 버튼 비활성화 및 정지 버튼 표시
+    currentSelectedBlocks = []; // 새 파일 선택 시 초기화
+
+    zip = new JSZip(); // 전체 이미지 다운로드용 zip 객체 초기화
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+        try {
+            const pdf = await getDocument(new Uint8Array(reader.result)).promise;
+            totalPdfPages = pdf.numPages; // 전체 페이지 수 저장
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+                if (!isProcessing) { // 정지 요청 확인 (이미지 변환 중에도 중단 가능)
+                    status.textContent = `작업 중단됨. ${i - 1} 페이지까지 변환되었습니다.`;
+                    break; // 루프 중단
+                }
+
+                status.textContent = `페이지 ${i}/${pdf.numPages} 이미지 변환 중...`; // 페이지별 진행 상태 업데이트
+
+                const page = await pdf.getPage(i);
+                // 이미지 변환 스케일을 2.0으로 높여 OCR 정확도 개선 시도 (미리보기 및 다운로드 이미지에도 적용됨)
+                const viewport = page.getViewport({ scale: 2.0 });
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.width = "100%";
+                canvas.style.height = "auto";
+                canvas.style.maxWidth = "100%";
+
+                await page.render({ canvasContext: ctx, viewport }).promise;
+
+                // *** 이미지 전처리 코드는 OCR 변환 시점으로 이동 ***
+                // 여기서 이진화 처리를 제거합니다.
+
+
+                const block = document.createElement("div");
+                block.className = "image-block";
+                block.dataset.index = i; // 원본 PDF 페이지 인덱스 저장
+
+                const label = document.createElement("p");
+                label.textContent = `페이지 ${i}`;
+                block.appendChild(label);
+                block.appendChild(canvas);
+
+                const dataUrl = canvas.toDataURL("image/jpeg");
+                const blob = await (await fetch(dataUrl)).blob();
+                const filename = `page-${i}.jpg`;
+
+                block.dataset.filename = filename;
+                block.dataset.blobUrl = URL.createObjectURL(blob);
+                block.dataset.dataUrl = dataUrl; // OCR에 사용 (원본 이미지 dataUrl)
+
+                block.addEventListener("click", (e) => handleBlockClick(e, block));
+
+                // 전체 이미지 다운로드용 zip에 파일 추가 (원본 이미지 사용)
+                zip.file(filename, blob);
+                output.appendChild(block);
+            }
+
+            // 이미지 변환 완료 또는 중단 후 처리
+            if (isProcessing) { // 정상 완료된 경우
+                 status.textContent = "이미지 변환 완료! 페이지를 선택하고 'OCR 변환' 버튼을 눌러 옵션을 확인하세요."; // 메시지 수정
+                 // 이미지 변환 완료 후 페이지가 생성되었으면 선택 패널 표시
+                const pagesExistAfterConversion = output.querySelectorAll(".image-block").length > 0;
+                if (pagesExistAfterConversion) {
+                     selectionPanel.classList.remove("hidden");
+                }
+            } else {
+                status.textContent += " 이미지 변환이 중단되었습니다.";
+                 // 중단 후 페이지가 생성되었으면 선택 패널 표시
+                const pagesExistAfterConversion = output.querySelectorAll(".image-block").length > 0;
+                if (pagesExistAfterConversion) {
+                     selectionPanel.classList.remove("hidden");
+                }
+            }
+            updateButtonStates(false); // 작업 완료, 버튼 상태 업데이트 (이미지 다운로드 활성화)
+            updateSelectionUI(); // 선택 UI 업데이트
+
+        } catch (error) {
+            console.error("PDF 이미지 변환 중 오류 발생:", error);
+            status.textContent = "PDF 이미지 변환 중 오류가 발생했습니다.";
+            updateButtonStates(false); // 오류 발생 시 버튼 상태 업데이트
+        }
+    };
+    try {
+        reader.readAsArrayBuffer(selectedFile);
+    } catch (error) {
+        console.error("파일 읽기 중 오류 발생:", error);
+        status.textContent = "파일 읽기 중 오류가 발생했습니다. 다른 파일을 시도해보세요.";
+        updateButtonStates(false); // 오류 발생 시 버튼 상태 업데이트
+        // Reset file input and related state if reading fails
+        pdfInput.value = "";
+        selectedFile = null;
+        output.innerHTML = "";
+        selectionPanel.classList.add("hidden");
+        ocrActionButtons.classList.add("hidden");
+        ocrOptionsContainer.classList.add("hidden");
+        selectedFileNameElement.textContent = "";
+        storedOcrResults = [];
+        isOcrCompleted = false;
+        totalPdfPages = 0;
+        updateButtonStates(false); // Ensure buttons are reset
+        ocrTriggerBtn.disabled = true;
+        downloadImageBtn.disabled = true;
+        resetBtn.disabled = true;
+    }
+
+
+  } else {
+    selectedFileNameElement.textContent = ""; // 파일명 초기화
+    status.textContent = "PDF 파일만 업로드 가능합니다.";
+    selectedFile = null; // 파일 선택 해제
+    output.innerHTML = ""; // 미리보기 초기화
+    selectionPanel.classList.add("hidden"); // 선택 패널 숨김
+    ocrActionButtons.classList.add("hidden"); // OCR 버튼 그룹 숨김
+    ocrOptionsContainer.classList.add("hidden"); // OCR 옵션 컨테이너 숨김
+    storedOcrResults = []; // 파일 선택 해제 시 OCR 결과 초기화
+    isOcrCompleted = false; // OCR 완료 상태 초기화
+    totalPdfPages = 0; // 전체 페이지 수 초기화
+    updateButtonStates(false); // 버튼 상태 업데이트 (변환 불가능)
+    // 파일이 없으므로 관련 버튼 모두 비활성화
+    ocrTriggerBtn.disabled = true;
+    downloadImageBtn.disabled = true;
+    resetBtn.disabled = true; // 파일 없을 때 초기화 버튼 비활성화
+  }
+}
+
+pdfInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+dropZone.addEventListener("click", () => pdfInput.click());
+dropZone.addEventListener("dragover", (e) => e.preventDefault());
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+});
+
+// 'OCR 변환' 버튼 클릭 이벤트 리스너 (옵션 표시/숨김)
+ocrTriggerBtn.addEventListener("click", () => {
+     if (isProcessing) return; // 작업 중에는 클릭 무시
+
+     // OCR 옵션 컨테이너의 표시 상태를 토글
+     const isHidden = ocrOptionsContainer.classList.contains("hidden");
+     if (isHidden) {
+          ocrOptionsContainer.classList.remove("hidden");
+     } else {
+          ocrOptionsContainer.classList.add("hidden");
+     }
+
+     // 옵션 컨테이너 표시 상태에 따라 시작 버튼의 활성화 상태 업데이트
+     updateButtonStates(isProcessing);
+});
+
+
+// 새로운 '시작' 버튼 클릭 이벤트 리스너 (실제 OCR 변환 시작)
+startOcrBtn.addEventListener("click", async () => {
+  if (!selectedFile) {
+    status.textContent = "먼저 PDF 파일을 선택해주세요.";
+    selectedFileNameElement.textContent = "";
+    return;
+  }
+  const pagesExist = output.querySelectorAll(".image-block").length > 0;
+  if (!pagesExist) {
+      status.textContent = "이미지 변환이 먼저 완료되어야 합니다.";
+      return;
+  }
+  const selectedBlocks = output.querySelectorAll(".image-block.selected"); // 선택된 블록만 가져옴
+   if (selectedBlocks.length === 0) {
+      status.textContent = "OCR 변환할 페이지를 하나 이상 선택해주세요.";
+      return;
+  }
+
+  // 현재 OCR 변환 대상인 선택된 블록 목록을 저장
+  currentSelectedBlocks = Array.from(selectedBlocks);
+
+
+  // 새로운 OCR 변환 시작 시 이전 OCR 결과 및 상태 초기화
+  // 모든 이미지 블록에서 ocr-processed 클래스 제거
+  output.querySelectorAll(".image-block").forEach(block => {
+      block.classList.remove("ocr-processed");
+      block.dataset.ocrText = ""; // 저장된 텍스트도 초기화
+  });
+  storedOcrResults = []; // OCR 결과 초기화
+  isOcrCompleted = false; // OCR 완료 상태 초기화
+
+
+  status.textContent = "OCR 분석 중...";
+  updateButtonStates(true); // OCR 분석 중, 버튼 비활성화 및 정지 버튼 표시
+  ocrActionButtons.classList.add("hidden"); // OCR 버튼 그룹 숨김
+
+  // 선택된 언어 및 PSM 모드로 Tesseract worker 로드 또는 재설정
+  currentOcrLanguage = languageSelect.value;
+  currentPsm = parseInt(psmSelect.value); // 드롭다운에서 현재 선택된 PSM 값 가져오기
+  await loadOcrWorker(currentOcrLanguage); // loadOcrWorker 내부에서 currentPsm 사용
+
+
+  try {
+      const totalBlocksToProcess = currentSelectedBlocks.length;
+
+      for (let i = 0; i < totalBlocksToProcess; i++) { // 선택된 블록 수만큼 반복
+          if (!isProcessing) { // 정지 요청 확인
+              status.textContent = `작업 중단됨. ${i} 페이지까지 OCR 분석되었습니다.`;
+              break; // 루프 중단
+          }
+
+          const block = currentSelectedBlocks[i]; // 저장된 선택된 블록 목록 사용
+          const pageIndex = parseInt(block.dataset.index); // 원본 PDF 페이지 인덱스
+          const originalDataUrl = block.dataset.dataUrl; // 원본 이미지 dataUrl 가져오기
+
+          // 원본 이미지 dataUrl을 사용하여 OCR 전처리를 적용한 이미지 생성
+          const tempCanvas = document.createElement('canvas');
+          const tempCtx = tempCanvas.getContext('2d');
+          const img = new Image();
+          img.src = originalDataUrl;
+          await new Promise((resolve) => { // 이미지 로딩 대기
+              img.onload = resolve;
+          });
+          tempCanvas.width = img.width;
+          tempCanvas.height = img.height;
+          tempCtx.drawImage(img, 0, 0);
+
+          // OCR 전처리 적용 (예: 이진화) - 필요시 다른 전처리 함수 추가 가능
+          binarizeImage(tempCanvas); // 위에서 정의한 이진화 함수 사용
+
+          const processedDataUrl = tempCanvas.toDataURL("image/jpeg"); // 전처리된 이미지 dataUrl
+
+
+          // Tesseract logger에서 사용할 jobId를 현재 선택된 블록의 루ープ 인덱스 i로 설정
+          // 이렇게 하면 logger에서 m.jobId를 통해 현재 처리 중인 블록을 간접적으로 알 수 있습니다.
+          // 상태 메시지는 logger에서 업데이트되므로 여기서 페이지 번호 업데이트는 필요 없음
+          // status.textContent = `OCR 분석 중: 전체 ${totalPdfPages} 페이지 중 ${pageIndex} 페이지 (${i + 1}/${selectedBlocks.length} 선택 페이지)`; // 상세 진행 상태 업데이트
+
+
+          // 전처리된 이미지 dataUrl을 사용하여 OCR 수행
+          // OCR 옵션을 명시적으로 전달 (PSM 값은 loadOcrWorker에서 설정됨)
+          // logger는 loadOcrWorker에서 설정되므로 여기서는 별도 logger 전달 불필요
+          const { data: { text, words } } = await worker.recognize(processedDataUrl, { jobId: i });
+
+
+          // 추출된 텍스트를 블록 요소에 저장
+          block.dataset.ocrText = text;
+          // OCR 완료된 블록에 클래스 추가
+          block.classList.add("ocr-processed");
+
+          // OCR 완료된 페이지 수를 세어서 상태 메시지 업데이트
+          const completedCount = output.querySelectorAll(".image-block.ocr-processed").length;
+          status.textContent = `OCR 분석 중: ${completedCount}/${totalBlocksToProcess} 페이지 완료`;
+
+
+          // 기존 결과에 해당 페이지 결과가 있으면 업데이트, 없으면 추가
+          const existingResultIndex = storedOcrResults.findIndex(result => result.pageIndex === pageIndex);
+          if (existingResultIndex > -1) {
+               storedOcrResults[existingResultIndex] = {
+                   pageIndex: pageIndex,
+                   dataUrl: originalDataUrl, // OCR 결과 저장 시에는 원본 dataUrl 사용
+                   words: words,
+                   text: text
+               };
+          } else {
+              storedOcrResults.push({
+                  pageIndex: pageIndex, // 원본 PDF 페이지 인덱스
+                  dataUrl: originalDataUrl, // OCR 결과 저장 시에는 원본 dataUrl 사용
+                  words: words,
+                  text: text // 저장된 텍스트도 포함
+              });
+          }
+          // 페이지 인덱스 순서대로 정렬 (OCR 결과가 순서대로 저장되지 않을 수 있으므로)
+          storedOcrResults.sort((a, b) => a.pageIndex - b.pageIndex);
+
+
+      }
+
+      // 루프 완료 또는 중단 후 처리
+      if (isProcessing) { // 정상 완료된 경우
+          status.textContent = "OCR 분석 완료!";
+          isOcrCompleted = true; // OCR 완료 상태 플래그 설정
+      } else {
+           status.textContent += " OCR 분석이 중단되었습니다.";
+      }
+      updateButtonStates(false); // 작업 완료, 버튼 상태 업데이트
+      updateSelectionUI(); // 선택 UI 업데이트 (버튼 활성화/비활성화 포함)
+
+  } catch (error) {
+      console.error("OCR 분석 중 오류 발생:", error);
+      status.textContent = "OCR 분석 중 오류가 발생했습니다.";
+      updateButtonStates(false); // 오류 발생 시 버튼 상태 업데이트
+  }
+});
+
+
+// 페이지 블록 클릭 핸들러
+function handleBlockClick(e, block) {
+  if (isProcessing) return; // 작업 중에는 선택 변경 불가
+
+  // 모달이 열려있으면 클릭 무시
+   if (ocrTextModalOverlay.style.display === "flex") {
+      return;
+   }
+
+
+  e.stopPropagation();
+
+  const allBlocks = Array.from(output.querySelectorAll(".image-block"));
+  const currentIndex = parseInt(block.dataset.index);
+
+  if (e.shiftKey && lastSelectedIndex !== null) {
+    const from = Math.min(lastSelectedIndex, currentIndex);
+    const to = Math.max(lastSelectedIndex, currentIndex);
+
+    allBlocks.forEach((b) => {
+      const idx = parseInt(b.dataset.index);
+      if (idx >= from && idx <= to) {
+        b.classList.add("selected");
+      } else {
+          // Shift 클릭 시 범위에 포함되지 않으면 선택 해제
+          b.classList.remove("selected");
+      }
+    });
+  } else {
+    // Shift 키 없이 클릭 시 해당 블록의 선택 상태만 토글
+    block.classList.toggle("selected");
+    lastSelectedIndex = currentIndex;
+  }
+
+  updateSelectionUI(); // 페이지 선택 상태 변경 시 UI 업데이트 및 버튼 상태 갱신
+
+  // 선택된 페이지가 없으면 OCR 옵션 컨테이너 숨김
+  const selectedPagesExist = output.querySelectorAll(".image-block.selected").length > 0;
+  if (!selectedPagesExist) {
+      ocrOptionsContainer.classList.add("hidden");
+  }
+}
+
+function updateSelectionUI() {
+  const selected = output.querySelectorAll(".image-block.selected");
+  const all = output.querySelectorAll(".image-block");
+  selectedCountSpan.textContent = `(선택: ${selected.length})`;
+  // 선택된 페이지가 있으면 선택 해제 버튼 표시, 없으면 숨김
+  clearSelectionBtn.classList.toggle("hidden", selected.length === 0);
+
+  // 전체 선택 체크박스 상태 업데이트
+  selectAllCheckbox.checked = selected.length === all.length && all.length > 0;
+
+  // 페이지 선택 상태 변경 시 다운로드 버튼 활성화/비활성화 상태 갱신
+  updateButtonStates(isProcessing);
+}
+
+selectAllCheckbox.addEventListener("change", (e) => {
+  if (isProcessing) return; // 작업 중에는 선택 변경 불가
+   // 모달이 열려있으면 클릭 무시
+   if (ocrTextModalOverlay.style.display === "flex") {
+      return;
+   }
+
+  const all = output.querySelectorAll(".image-block");
+  all.forEach((block) => block.classList.toggle("selected", e.target.checked));
+  updateSelectionUI(); // 페이지 선택 상태 변경 시 UI 업데이트 및 버튼 상태 갱신
+
+  // 전체 선택 해제 시 OCR 옵션 컨테이너 숨김
+  if (!e.target.checked) {
+      ocrOptionsContainer.classList.add("hidden");
+  }
+});
+
+clearSelectionBtn.addEventListener("click", () => {
+  if (isProcessing) return; // 작업 중에는 선택 변경 불가
+   // 모달이 열려있으면 클릭 무시
+   if (ocrTextModalOverlay.style.display === "flex") {
+      return;
+   }
+  const all = output.querySelectorAll(".image-block.selected");
+  all.forEach((block) => block.classList.remove("selected"));
+  updateSelectionUI(); // 페이지 선택 상태 변경 시 UI 업데이트 및 버튼 상태 갱신
+
+  // 선택 해제 버튼 클릭 시 OCR 옵션 컨테이너 숨김
+  ocrOptionsContainer.classList.add("hidden");
+});
+
+// 이미지 다운로드 버튼 클릭 이벤트 리스너 (선택된 페이지만 다운로드)
+downloadImageBtn.addEventListener("click", async () => {
+    // 이 버튼은 updateButtonStates에 의해 작업 중이 아닐 때만 활성화되므로 isProcessing 확인은 불필요하지만 안전을 위해 유지
+    if (isProcessing) return;
+
+    const selected = output.querySelectorAll(".image-block.selected");
+    if (selected.length === 0) {
+        // 버튼이 비활성화되어야 하지만 혹시 모를 경우
+        status.textContent = "이미지를 다운로드할 페이지를 선택해주세요.";
+        return;
+    }
+
+    status.textContent = `선택된 페이지 (${selected.length}개) 압축 중...`;
+    const selectedZip = new JSZip();
+    for (const block of selected) {
+        // 원본 Blob URL 사용
+        const res = await fetch(block.dataset.blobUrl);
+        const blob = await res.blob();
+        selectedZip.file(block.dataset.filename, blob);
+    }
+
+    try {
+        const zipBlob = await selectedZip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "selected-pages.zip"; // 선택된 페이지만 다운로드
+        document.body.appendChild(a); // Firefox에서 필요
+        a.click();
+        document.body.removeChild(a); // 다운로드 후 요소 제거
+        URL.revokeObjectURL(url); // 메모리 해제
+        status.textContent = "이미지 다운로드 완료!";
+    } catch (error) {
+        console.error("이미지 다운로드 중 오류 발생:", error);
+        status.textContent = "이미지 다운로드 중 오류가 발생했습니다.";
+    } finally {
+         // 상태 메시지 복원 또는 초기화 필요시 여기에 추가
+    }
+
+});
+
+
+resetBtn.addEventListener("click", () => {
+  if (isProcessing) return; // 작업 중에는 초기화 불가
+
+  pdfInput.value = "";
+  selectedFile = null;
+  output.innerHTML = "";
+  selectionPanel.classList.add("hidden"); // 초기화 시 선택 패널 숨김
+  ocrActionButtons.classList.add("hidden"); // OCR 버튼 그룹 숨김
+  ocrOptionsContainer.classList.add("hidden"); // OCR 옵션 컨테이너 숨김
+  selectedFileNameElement.textContent = "";
+  status.textContent = "초기화되었습니다.";
+  selectAllCheckbox.checked = false;
+  storedOcrResults = []; // 초기화 시 OCR 결과 초기화
+  isOcrCompleted = false; // OCR 완료 상태 초기화
+  totalPdfPages = 0; // 전체 페이지 수 초기화
+   // 모든 이미지 블록에서 ocr-processed 클래스 제거
+  output.querySelectorAll(".image-block").forEach(block => {
+      block.classList.remove("ocr-processed");
+      block.dataset.ocrText = ""; // 저장된 텍스트도 초기화
+  });
+  updateButtonStates(false); // 초기화 후 버튼 상태 업데이트
+  // 파일이 없으므로 관련 버튼 모두 비활성화
+  ocrTriggerBtn.disabled = true;
+  downloadImageBtn.disabled = true;
+  resetBtn.disabled = true; // 파일 없을 때 초기화 버튼 비활성화
+});
+
+// OCR PDF 다운로드 버튼 클릭 이벤트 리스너
+downloadOcrPdfBtn.addEventListener("click", async () => {
+    // 이 버튼은 updateButtonStates에 의해 작업 중이 아닐 때만 활성화되므로 isProcessing 확인은 불필요하지만 안전을 위해 유지
+    if (isProcessing) return;
+
+    const selectedBlocks = output.querySelectorAll(".image-block.ocr-processed"); // OCR 처리 완료된 블록만 가져옴
+    // 선택된 블록이 없으면 (버튼이 비활성화되어야 하지만 혹시 모를 경우) OCR 결과가 있으면 전체 사용
+    const blocksToProcessIndices = Array.from(selectedBlocks).map(block => parseInt(block.dataset.index));
+
+
+    if (blocksToProcessIndices.length === 0 || storedOcrResults.length === 0) {
+        status.textContent = "OCR PDF로 변환할 페이지가 없습니다.";
+        return;
+    }
+
+    status.textContent = `OCR PDF 생성 시작... (${blocksToProcessIndices.length} 페이지)`;
+    // OCR PDF 생성 중에는 isProcessing 플래그를 true로 설정하고 버튼 상태 업데이트 (정지 버튼 표시 등)
+    // PDF 생성 중에는 정지 기능은 복잡하므로, 여기서는 isProcessing을 true로 설정하지 않고 상태 메시지만 업데이트
+    // updateButtonStates(true); // PDF 생성 중 정지 기능은 현재 구현되지 않음
+
+    const ocrResultsForPdf = storedOcrResults.filter(result =>
+        blocksToProcessIndices.includes(result.pageIndex)
+    ).sort((a, b) => a.pageIndex - b.pageIndex); // 페이지 순서대로 정렬
+
+
+    try {
+        // 새 PDF 문서 생성
+        const pdfDoc = await PDFDocument.create();
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica); // 텍스트 레이어에 사용할 폰트
+
+        for (let i = 0; i < ocrResultsForPdf.length; i++) {
+                 // PDF 생성 중에는 정지 요청 확인 (현재는 OCR 분석 단계에서만 중단 플래그 확인)
+                 // if (!isProcessing) { ... break; }
+
+
+                const result = ocrResultsForPdf[i];
+                const { pageIndex, dataUrl, words } = result; // dataUrl은 원본 이미지 dataUrl
+
+
+                 status.textContent = `PDF에 페이지 추가 중... (페이지 ${i + 1}/${ocrResultsForPdf.length})`; // 현재 PDF에 추가 중인 페이지 표시
+
+
+                try {
+                    // 원본 이미지 삽입
+                    const image = await pdfDoc.embedJpg(dataUrl); // JPEG 이미지 삽입
+                    const imageDims = image.scale(1); // 이미지 원본 크기 사용
+
+                    // 이미지 크기에 맞는 새 페이지 추가
+                    const page = pdfDoc.addPage([imageDims.width, imageDims.height]);
+                    // 페이지에 이미지 그리기
+                    page.drawImage(image, {
+                        x: 0,
+                        y: 0,
+                        width: imageDims.width,
+                        height: imageDims.height,
+                    });
+
+                    // 추출된 단어들을 투명한 텍스트 레이어로 PDF에 추가
+                    words.forEach(word => {
+                        const { bbox, text } = word;
+                        if (text.trim()) { // 공백이 아닌 텍스트만 추가
+                            // 이미지 좌표를 PDF 페이지 좌표로 변환
+                            // Tesseract bbox는 이미지 좌상단 기준 (x0, y0) - (x1, y1)
+                            // PDF-LIB drawText는 페이지 좌하단 기준 (x, y)
+                            // 이미지 높이를 사용하여 y 좌표 변환: PDF_y = Image_height - Tesseract_y1 - Tesseract_height
+                            const textHeight = bbox.y1 - bbox.y0; // Tesseract bbox 높이
+                            const pdfY = imageDims.height - bbox.y1; // PDF 좌하단 기준 Y 좌표
+
+                            // Tesseract 폰트 크기와 PDF 폰트 크기 매핑 (근사치)
+                            // Tesseract bbox 높이를 PDF 폰트 크기로 사용
+                             const fontSize = textHeight; // bbox 높이를 폰트 크기로 사용
+
+                            page.drawText(text, {
+                                x: bbox.x0, // Tesseract x0 그대로 사용
+                                y: pdfY,
+                                font: font,
+                                fontSize: fontSize,
+                                color: rgb(0, 0, 0), // 텍스트 색상은 검정
+                                opacity: 0, // 투명도 0으로 설정하여 보이지 않게 함
+                            });
+                        }
+                    });
+
+                } catch (error) {
+                    console.error(`PDF 페이지 추가 중 오류 발생 (페이지 ${pageIndex}):`, error);
+                    // 오류 발생 시 해당 페이지는 건너뛰거나 오류 메시지를 PDF에 추가할 수 있음
+                }
+            }
+
+             // PDF 저장 및 다운로드 (PDF 페이지가 하나라도 생성된 경우에만 시도)
+            if (pdfDoc.getPageCount() > 0) { // PDF 페이지가 하나라도 생성되었으면 저장 및 다운로드
+                 status.textContent = "PDF 저장 중...";
+                const pdfBytes = await pdfDoc.save();
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = selectedFile.name.replace('.pdf', '_ocr.pdf'); // 원본 파일명에 _ocr 추가
+                document.body.appendChild(a); // Firefox에서 필요
+                a.click();
+                document.body.removeChild(a); // 다운로드 후 요소 제거
+                URL.revokeObjectURL(url); // 메모리 해제
+
+                status.textContent = `OCR PDF 변환 완료!`;
+
+            } else {
+                 status.textContent = "PDF 생성 중 오류가 발생하여 PDF를 생성할 수 없습니다.";
+            }
+
+
+    } catch (error) {
+        console.error("OCR 분석 중 오류 발생:", error);
+        status.textContent = "OCR 분석 중 오류가 발생했습니다.";
+    } finally {
+        // PDF 생성 완료/오류 후 버튼 상태 업데이트
+        updateButtonStates(false);
+    }
+});
+
+// 텍스트 보기 버튼 클릭 이벤트 리스너 (모달 표시)
+viewOcrTextBtn.addEventListener("click", () => {
+    // 이 버튼은 updateButtonStates에 의해 작업 중이 아닐 때만 활성화되므로 isProcessing 확인은 불필요하지만 안전을 위해 유지
+    if (isProcessing) return;
+
+    const selectedBlocks = output.querySelectorAll(".image-block.selected");
+    if (selectedBlocks.length === 0) {
+        // 이 버튼은 선택된 페이지가 있을 때만 활성화되므로 이 경우는 발생하지 않아야 하지만 안전을 위해 확인
+        status.textContent = "텍스트를 볼 페이지를 선택해주세요.";
+        return;
+    }
+
+    let combinedText = "";
+    // 선택된 블록에 해당하는 OCR 결과만 찾아서 텍스트 합치기 (페이지 순서대로 정렬)
+    const selectedPagesIndices = Array.from(selectedBlocks).map(block => parseInt(block.dataset.index)).sort((a, b) => a - b);
+
+    selectedPagesIndices.forEach(pageIndex => {
+        const ocrResult = storedOcrResults.find(result => result.pageIndex === pageIndex);
+        const ocrText = ocrResult ? ocrResult.text : '추출된 텍스트가 없습니다.';
+        combinedText += `--- 페이지 ${pageIndex} ---\n\n${ocrText}\n\n`;
+    });
+
+
+    // 모달에 텍스트 채우기
+    modalTextArea.value = combinedText.trim(); // textarea는 value 속성 사용
+
+    // 모달 표시
+    ocrTextModalOverlay.style.display = "flex";
+
+    // 모달이 열릴 때 텍스트 다운로드 버튼 활성화 (텍스트가 있으면)
+    modalDownloadTextBtn.disabled = modalTextArea.value.trim().length === 0;
+});
+
+// 모달 복사 버튼 이벤트 리스너
+modalCopyTextBtn.addEventListener("click", () => {
+    const textToCopy = modalTextArea.value; // textarea는 value 속성 사용
+    navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+            modalCopyTextBtn.textContent = "복사됨!";
+            setTimeout(() => { modalCopyTextBtn.textContent = "텍스트 복사하기"; }, 2000); // 2초 후 원래대로 복원
+        })
+        .catch(err => {
+            console.error('텍스트 복사 실패:', err);
+            modalCopyTextBtn.textContent = "복사 실패";
+             setTimeout(() => { modalCopyTextBtn.textContent = "텍스트 복사하기"; }, 2000); // 2초 후 원래대로 복원
+        });
+});
+
+// 모달 닫기 버튼 이벤트 리스너
+modalCloseTextBtn.addEventListener("click", () => {
+    ocrTextModalOverlay.style.display = "none";
+    modalTextArea.value = ""; // 모달 닫을 때 텍스트 초기화
+});
+
+// 모달 외부 클릭 시 닫기
+ocrTextModalOverlay.addEventListener("click", (e) => {
+    if (e.target === ocrTextModalOverlay) {
+        ocrTextModalOverlay.style.display = "none";
+        modalTextArea.value = ""; // 모달 닫을 때 텍스트 초기화
+    }
+});
+
+// 모달 수정 저장 버튼 이벤트 리스너
+modalSaveEditedTextBtn.addEventListener("click", () => {
+    const editedText = modalTextArea.value;
+    const selectedBlocks = output.querySelectorAll(".image-block.selected");
+
+    if (selectedBlocks.length === 0) {
+         // 이 경우는 발생하지 않아야 하지만 안전을 위해 확인
+         console.warn("수정할 페이지가 선택되지 않았습니다.");
+         return;
+    }
+
+    // 선택된 페이지들의 ocrText를 모달의 내용으로 업데이트 (간단한 구현)
+    // 여러 페이지가 선택된 경우, 모달의 전체 내용이 모든 선택된 페이지에 동일하게 저장됩니다.
+    // 페이지별로 편집하려면 모달 구조나 로직이 더 복잡해져야 합니다.
+    // 여기서는 선택된 모든 페이지의 ocrText를 모달 내용으로 업데이트합니다.
+    selectedBlocks.forEach(block => {
+        const pageIndex = parseInt(block.dataset.index);
+        block.dataset.ocrText = editedText; // 블록 요소의 ocrText 업데이트
+
+        // storedOcrResults 배열에서도 해당 페이지의 텍스트 업데이트
+        const ocrResultIndex = storedOcrResults.findIndex(result => result.pageIndex === pageIndex);
+        if (ocrResultIndex > -1) {
+            storedOcrResults[ocrResultIndex].text = editedText;
+        } else {
+             // OCR 결과가 없는데 텍스트를 수정하는 경우는 드물지만, 새로운 결과로 추가
+             storedOcrResults.push({
+                 pageIndex: pageIndex,
+                 dataUrl: block.dataset.dataUrl, // 원본 이미지 dataUrl 사용
+                 words: [], // 수정된 텍스트에는 원본 단어 정보가 없을 수 있음
+                 text: editedText
+             });
+             storedOcrResults.sort((a, b) => a.pageIndex - b.pageIndex); // 순서대로 정렬
+        }
+    });
+
+    status.textContent = `선택된 페이지 (${selectedBlocks.length}개) 텍스트 수정 저장 완료!`;
+    // 모달 닫기
+    ocrTextModalOverlay.style.display = "none";
+    modalTextArea.value = ""; // 모달 닫을 때 텍스트 초기화
+});
+
+
+// 모달 텍스트 다운로드 버튼 클릭 이벤트 리스너 (모달 안으로 이동)
+modalDownloadTextBtn.addEventListener("click", () => {
+     // 이 버튼은 모달이 열릴 때 활성화/비활성화되므로 isProcessing 확인은 불필요하지만 안전을 위해 유지
+     if (isProcessing) return;
+
+    const textToDownload = modalTextArea.value; // 모달 텍스트 영역의 내용 가져오기
+
+    if (textToDownload.trim().length === 0) {
+        status.textContent = "다운로드할 텍스트 내용이 없습니다.";
+        return;
+    }
+
+    const blob = new Blob([textToDownload], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    // 파일명은 선택된 페이지들을 기반으로 생성하거나 기본 파일명 사용
+    // 여기서는 간단하게 원본 파일명에 '_ocr_text'를 추가
+    a.download = selectedFile.name.replace('.pdf', '_ocr_text.txt');
+    document.body.appendChild(a); // Firefox에서 필요
+    a.click();
+    document.body.removeChild(a); // 다운로드 후 요소 제거
+    URL.revokeObjectURL(url); // 메모리 해제
+
+    // 상태 메시지는 모달 닫기 후 업데이트하는 것이 자연스러움
+    // status.textContent = `텍스트 다운로드 완료!`;
+});
+
+
+// 정지 버튼 클릭 이벤트 리스너
+stopBtn.addEventListener("click", () => {
+    if (isProcessing) {
+        isProcessing = false; // 플래그만 변경하여 루프 중단 요청
+        status.textContent = "작업 중단됨..."; // 상태 메시지 업데이트
+        stopBtn.disabled = true; // 중단 요청 후 버튼 비활성화
+        // Tesseract worker에게도 중단 요청 (필요하다면)
+        // worker.terminate(); // 이 경우 worker를 다시 생성해야 할 수 있습니다.
+        // 간단하게는 플래그 확인으로 루프를 중단하는 방식이 더 구현하기 쉽습니다.
+    }
+});
+
+
+// 드래그로 선택하기
+let isSelecting = false;
+let startX, startY;
+let selectBox = null;
+
+output.addEventListener("mousedown", (e) => {
+  if (isProcessing) return; // 작업 중에는 선택 불가
+
+  // 모달이 열려있으면 클릭 무시
+   if (ocrTextModalOverlay.style.display === "flex") {
+      return;
+   }
+
+
+  e.stopPropagation();
+
+  // 마우스 왼쪽 버튼 클릭이 아니거나 image-block 내부에서 시작된 클릭이면 드래그 선택 시작 안함
+  if (e.button !== 0 || e.target.closest(".image-block")) {
+      return;
+  }
+
+  isSelecting = true;
+  const rect = output.getBoundingClientRect();
+  startX = e.clientX - rect.left;
+  startY = e.clientY - rect.top;
+
+  selectBox = document.createElement("div");
+  Object.assign(selectBox.style, {
+    position: "absolute",
+    zIndex: 1000,
+    border: "2px dashed #4299e1",
+    backgroundColor: "rgba(66,153,225,0.2)",
+    left: `${startX}px`,
+    top: `${startY}px`,
+    width: `0px`,
+    height: `0px`,
+    pointerEvents: "none" // 드래그 박스 위에서 마우스 이벤트가 발생하지 않도록 함
+  });
+  output.appendChild(selectBox);
+});
+
+output.addEventListener("mousemove", (e) => {
+  if (!isSelecting) return;
+  const rect = output.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const boxX = Math.min(startX, x);
+  const boxY = Math.min(startY, y);
+  const boxW = Math.abs(startX - x);
+  const boxH = Math.abs(startY - y);
+  Object.assign(selectBox.style, {
+    left: `${boxX}px`,
+    top: `${boxY}px`,
+    width: `${boxW}px`,
+    height: `${boxH}px`
+  });
+
+  // 드래그 중 실시간으로 선택 영역 업데이트 (선택된 블록 시각적으로 표시)
+  const currentRect = { x1: boxX, y1: boxY, x2: boxX + boxW, y2: boxY + boxH };
+  const blocks = output.querySelectorAll(".image-block");
+  blocks.forEach((block) => {
+        // 드래그 선택 중에는 작업 중 플래그를 확인하지 않습니다.
+      const bRect = block.getBoundingClientRect();
+      const outputRect = output.getBoundingClientRect(); // output 기준 좌표 계산
+      const bx1 = bRect.left - outputRect.left;
+      const by1 = bRect.top - outputRect.top;
+      const bx2 = bx1 + bRect.width;
+      const by2 = by1 + bRect.height;
+
+      const blockRect = { x1: bx1, y1: by1, x2: bx2, y2: by2 };
+
+      // 두 사각형이 겹치는지 확인
+      const intersects = !(blockRect.x2 < currentRect.x1 || blockRect.x1 > currentRect.x2 || blockRect.y2 < currentRect.y1 || blockRect.y1 > currentRect.y2);
+
+      // 드래그 선택 중에는 마우스 다운 시점의 선택 상태를 유지하지 않고 드래그 영역에 포함된 것만 선택 표시
+      if (intersects) {
+          block.classList.add("selected");
+      } else {
+          // 드래그 영역에서 벗어난 경우 선택 해제
+          block.classList.remove("selected");
+        }
+    });
+  updateSelectionUI(); // 실시간 업데이트 후 UI 상태 갱신
+});
+
+output.addEventListener("mouseup", (e) => {
+  if (!isSelecting) return;
+  isSelecting = false;
+
+  // 드래그 박스 제거
+  if (selectBox) {
+      selectBox.remove();
+      selectBox = null;
+  }
+
+  // mousemove에서 이미 실시간 업데이트 했으므로 mouseup에서는 추가적인 선택 로직 필요 없음
+  // updateSelectionUI(); // mousemove에서 이미 호출됨
+});
+
+// 드래그 중 드래그 박스 밖으로 마우스가 나가도 선택 해제되지 않도록 window에 mousemove, mouseup 리스너 추가
+window.addEventListener("mousemove", (e) => {
+    if (!isSelecting || !selectBox) return;
+    // output div 기준 좌표 계산
+    const outputRect = output.getBoundingClientRect();
+    const x = e.clientX - outputRect.left;
+    const y = e.clientY - outputRect.top;
+
+    const boxX = Math.min(startX, x);
+    const boxY = Math.min(startY, y);
+    const boxW = Math.abs(startX - x);
+    const boxH = Math.abs(startY - y);
+
+     Object.assign(selectBox.style, {
+        left: `${boxX}px`,
+        top: `${boxY}px`,
+        width: `${boxW}px`,
+        height: `${boxH}px`
+      });
+
+    // 드래그 중 실시간으로 선택 영역 업데이트 (선택된 블록 시각적으로 표시)
+    const currentRect = { x1: boxX, y1: boxY, x2: boxX + boxW, y2: boxY + boxH };
+    const blocks = output.querySelectorAll(".image-block");
+    blocks.forEach((block) => {
+        const bRect = block.getBoundingClientRect();
+        const blockRect = { x1: bRect.left - outputRect.left, y1: bRect.top - outputRect.top, x2: (bRect.left - outputRect.left) + bRect.width, y2: (bRect.top - outputRect.top) + bRect.height };
+
+        const intersects = !(blockRect.x2 < currentRect.x1 || blockRect.x1 > currentRect.x2 || blockRect.y2 < currentRect.y1 || blockRect.y1 > currentRect.y2);
+
+        if (intersects) {
+            block.classList.add("selected");
+        } else {
+            block.classList.remove("selected");
+        }
+    });
+     updateSelectionUI();
+});
+
+window.addEventListener("mouseup", (e) => {
+    if (!isSelecting) return;
+    isSelecting = false;
+
+    if (selectBox) {
+        selectBox.remove();
+        selectBox = null;
+    }
+    // updateSelectionUI(); // mousemove/window mousemove에서 이미 호출됨
+});
+
+
+  </script>
+</body>
+</html>
